@@ -52,7 +52,7 @@ async function buildDocument({ title, numero, client, product, details, unitPric
   y -= 16;
   page.drawText(`Téléphone : ${client.phone || "-"}`, { x: 40, y, size: 10, font: reg, color: INK });
   y -= 14;
-  page.drawText(`Email : ${client.email}`, { x: 40, y, size: 10, font: reg, color: INK });
+  page.drawText(`Email : ${client.email || "-"}`, { x: 40, y, size: 10, font: reg, color: INK });
 
   y -= 30;
   // Table
@@ -120,10 +120,16 @@ exports.handler = async function (event) {
 
   try {
     const data = JSON.parse(event.body || "{}");
-    const { name, email, phone, product, details, unitPrice } = data;
+    // mode : "email" (par défaut), "whatsapp" ou "download"
+    const { name, email, phone, product, details, unitPrice, mode } = data;
+    const deliveryMode = mode || "email";
 
-    if (!name || !email) {
-      return { statusCode: 400, headers, body: JSON.stringify({ error: "Nom et email sont requis." }) };
+    // Pour whatsapp et download, l'email n'est pas obligatoire
+    if (!name) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: "Le nom est requis." }) };
+    }
+    if (deliveryMode === "email" && !email) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: "Email requis pour ce mode d'envoi." }) };
     }
 
     const numero = String(Date.now()).slice(-6);
@@ -149,6 +155,46 @@ exports.handler = async function (event) {
       note: "Ce document est un devis estimatif et ne constitue pas une facture définitive. Validité 15 jours. Paiement : Orange Money, Wave, Moov Money, ou virement bancaire N° " + COMPANY.compte + ".",
     });
 
+    const toBase64 = (bytes) => Buffer.from(bytes).toString("base64");
+
+    // ---- MODE TÉLÉCHARGEMENT : on renvoie direct les PDF en base64, pas d'email ----
+    if (deliveryMode === "download") {
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          success: true,
+          numero,
+          files: [
+            { filename: "Bon_de_commande.pdf", content: toBase64(bonCommandeBytes) },
+            { filename: "Facture_proforma.pdf", content: toBase64(factureProformaBytes) },
+          ],
+        }),
+      };
+    }
+
+    // ---- MODE WHATSAPP : pas d'envoi automatique de PDF (limitation WhatsApp),
+    // on renvoie juste un lien wa.me pré-rempli vers le numéro de l'entreprise ----
+    if (deliveryMode === "whatsapp") {
+      const msg =
+        `Bonjour PHOTART IMPRIM, je souhaite une commande :\n` +
+        `Nom : ${name}\n` +
+        (phone ? `Téléphone : ${phone}\n` : "") +
+        `Produit : ${product || "Demande de devis"}\n` +
+        (details ? `Détails : ${details}\n` : "") +
+        `N° de référence : ${numero}`;
+
+      const waNumber = COMPANY.mobile.replace(/[^\d]/g, ""); // garde uniquement les chiffres
+      const waLink = `https://wa.me/${waNumber}?text=${encodeURIComponent(msg)}`;
+
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({ success: true, numero, whatsappUrl: waLink }),
+      };
+    }
+
+    // ---- MODE EMAIL (comportement d'origine) ----
     const RESEND_API_KEY = process.env.RESEND_API_KEY;
     if (!RESEND_API_KEY) {
       return {
@@ -157,8 +203,6 @@ exports.handler = async function (event) {
         body: JSON.stringify({ error: "Service email non configuré (clé API manquante)." }),
       };
     }
-
-    const toBase64 = (bytes) => Buffer.from(bytes).toString("base64");
 
     const emailPayload = {
       from: process.env.RESEND_FROM || "PHOTART IMPRIM <onboarding@resend.dev>",
