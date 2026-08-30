@@ -733,6 +733,25 @@
           <option>Signalétique / banderole</option>
           <option>Autre</option>
         </select>
+
+        <div id="devisCartesTypeWrap" style="display:none;">
+          <label>Type d'impression (cartes de visite)</label>
+          <select id="devisCartesType">
+            <option value="6000">Recto seul — 6 000 FCFA / 100 cartes</option>
+            <option value="10000">Recto-verso — 10 000 FCFA / 100 cartes</option>
+          </select>
+        </div>
+
+        <div id="devisQtyWrap" style="display:none;">
+          <label id="devisQtyLabel">Quantité</label>
+          <input type="number" id="devisQty" min="1" step="1" value="100">
+        </div>
+
+        <div class="price-total" id="devisPriceBox" style="display:none; margin:6px 0 4px;">
+          <span>Estimation</span>
+          <strong id="devisPriceResult">—</strong>
+        </div>
+
         <label>Détails de votre demande</label>
         <textarea rows="4" id="devisDetails" placeholder="Quantité, dimensions, délai souhaité…"></textarea>
         <label class="consent">
@@ -952,6 +971,63 @@
     window.open(`https://wa.me/22372418551?text=${encodeURIComponent(message)}`, '_blank');
   });
 
+  // ===== Prix automatique dans le formulaire de devis =====
+  const devisProduitEl = document.getElementById('devisProduit');
+  const devisCartesTypeWrap = document.getElementById('devisCartesTypeWrap');
+  const devisCartesTypeEl = document.getElementById('devisCartesType');
+  const devisQtyWrap = document.getElementById('devisQtyWrap');
+  const devisQtyLabel = document.getElementById('devisQtyLabel');
+  const devisQtyEl = document.getElementById('devisQty');
+  const devisPriceBox = document.getElementById('devisPriceBox');
+  const devisPriceResult = document.getElementById('devisPriceResult');
+
+  function devisPricingConfig(produit) {
+    switch (produit) {
+      case 'Cartes de visite':
+        return { qty: true, qtyLabel: 'Quantité (multiples de 100)', qtyMin: 100, qtyStep: 100, qtyDefault: 100, cartesType: true };
+      case 'Flyers / affiches':
+        return { qty: true, qtyLabel: 'Nombre de designs / affiches', qtyMin: 1, qtyStep: 1, qtyDefault: 1, cartesType: false, perUnit: 5000 };
+      case 'Impression textile':
+        return { qty: true, qtyLabel: 'Quantité (unités : tissu, emballage, sachet)', qtyMin: 1, qtyStep: 1, qtyDefault: 1, cartesType: false, perUnit: 100 };
+      default:
+        return null; // pas de formule -> "À confirmer"
+    }
+  }
+
+  function computeDevisPrice() {
+    const produit = devisProduitEl.value;
+    const cfg = devisPricingConfig(produit);
+    if (!cfg) {
+      devisCartesTypeWrap.style.display = 'none';
+      devisQtyWrap.style.display = 'none';
+      devisPriceBox.style.display = 'none';
+      return null;
+    }
+    devisQtyWrap.style.display = 'block';
+    devisQtyLabel.textContent = cfg.qtyLabel;
+    devisQtyEl.min = cfg.qtyMin;
+    devisQtyEl.step = cfg.qtyStep;
+    if (!devisQtyEl.dataset.touched) devisQtyEl.value = cfg.qtyDefault;
+
+    devisCartesTypeWrap.style.display = cfg.cartesType ? 'block' : 'none';
+
+    const qty = parseFloat(devisQtyEl.value) || 0;
+    let total;
+    if (cfg.cartesType) {
+      const unit = parseFloat(devisCartesTypeEl.value);
+      total = (qty / 100) * unit;
+    } else {
+      total = qty * cfg.perUnit;
+    }
+    devisPriceBox.style.display = 'flex';
+    devisPriceResult.textContent = fmtFCFA(total);
+    return total;
+  }
+
+  devisProduitEl.addEventListener('change', () => { devisQtyEl.dataset.touched = ''; computeDevisPrice(); });
+  devisQtyEl.addEventListener('input', () => { devisQtyEl.dataset.touched = '1'; computeDevisPrice(); });
+  devisCartesTypeEl.addEventListener('change', computeDevisPrice);
+
   // Envoi de la demande de devis : Email en priorité, WhatsApp en secours
   function buildMessage() {
     const nom = document.getElementById('devisNom').value.trim();
@@ -959,13 +1035,15 @@
     const email = document.getElementById('devisEmail').value.trim();
     const produit = document.getElementById('devisProduit').value;
     const details = document.getElementById('devisDetails').value.trim();
+    const unitPrice = computeDevisPrice();
     let message = `Bonjour PHOTART IMPRIM, je souhaite un devis.\n\n`;
     message += `Nom : ${nom}\n`;
     message += `Téléphone : ${tel}\n`;
     message += `Email : ${email}\n`;
     message += `Produit : ${produit}\n`;
     if (details) message += `Détails : ${details}\n`;
-    return { nom, tel, email, produit, details, message };
+    if (unitPrice) message += `Estimation : ${fmtFCFA(unitPrice)} (peut varier selon les conditions et termes de travail)\n`;
+    return { nom, tel, email, produit, details, unitPrice, message };
   }
 
   // Envoi automatique : génère et envoie par email le bon de commande + la facture proforma
@@ -977,7 +1055,7 @@
     sentBox.classList.remove('show');
     errorBox.classList.remove('show');
 
-    const { nom, tel, email, produit, details } = buildMessage();
+    const { nom, tel, email, produit, details, unitPrice } = buildMessage();
     const originalLabel = btn.textContent;
     btn.textContent = 'Envoi en cours…';
     btn.disabled = true;
@@ -986,7 +1064,7 @@
       const resp = await fetch('/.netlify/functions/generate-quote', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: nom, email, phone: tel, product: produit, details }),
+        body: JSON.stringify({ name: nom, email, phone: tel, product: produit, details, unitPrice }),
       });
       if (!resp.ok) throw new Error('Échec envoi');
       sentBox.textContent = '✓ Vos documents (bon de commande + facture proforma) ont été envoyés par email.';
@@ -1032,7 +1110,7 @@
     const form = document.getElementById('devis');
     if (!form.reportValidity()) return;
 
-    const { nom, tel, produit, details } = buildMessage();
+    const { nom, tel, produit, details, unitPrice } = buildMessage();
     const btn = document.getElementById('submitDownload');
     const sentBox = document.getElementById('formSent');
     const errorBox = document.getElementById('formError');
@@ -1047,7 +1125,7 @@
       const resp = await fetch('/.netlify/functions/generate-quote', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: nom, phone: tel, product: produit, details, mode: 'download' }),
+        body: JSON.stringify({ name: nom, phone: tel, product: produit, details, unitPrice, mode: 'download' }),
       });
       if (!resp.ok) throw new Error('Échec génération');
       const data = await resp.json();
