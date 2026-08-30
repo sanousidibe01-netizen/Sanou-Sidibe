@@ -28,7 +28,37 @@ async function buildDocument({ title, numero, client, product, details, unitPric
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const reg = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const italic = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+  drawDocumentPage(page, { bold, reg, italic }, { title, numero, client, product, details, unitPrice, note });
+  return pdfDoc.save();
+}
 
+// Crée un seul PDF contenant les 2 documents (bon de commande + facture proforma),
+// une page chacun — pratique pour un téléchargement direct en un seul fichier.
+async function buildCombinedDocument({ numero, client, product, details, unitPrice, noteBonCommande, noteFacture }) {
+  const pdfDoc = await PDFDocument.create();
+  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const reg = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const italic = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+  const fonts = { bold, reg, italic };
+
+  const page1 = pdfDoc.addPage([595.28, 841.89]);
+  drawDocumentPage(page1, fonts, {
+    title: "BON DE COMMANDE",
+    numero, client, product, details, unitPrice,
+    note: noteBonCommande,
+  });
+
+  const page2 = pdfDoc.addPage([595.28, 841.89]);
+  drawDocumentPage(page2, fonts, {
+    title: "FACTURE PROFORMA",
+    numero, client, product, details, unitPrice,
+    note: noteFacture,
+  });
+
+  return pdfDoc.save();
+}
+
+function drawDocumentPage(page, { bold, reg, italic }, { title, numero, client, product, details, unitPrice, note }) {
   let y = 800;
 
   // En-tête société
@@ -83,8 +113,6 @@ async function buildDocument({ title, numero, client, product, details, unitPric
       page.drawText(line, { x: 40, y: y - i * 12, size: 8.5, font: italic, color: GRAY });
     });
   }
-
-  return pdfDoc.save();
 }
 
 function wrapText(text, font, size, maxWidth) {
@@ -135,6 +163,36 @@ exports.handler = async function (event) {
     const numero = String(Date.now()).slice(-6);
     const client = { name, phone, email };
 
+    const NOTE_BON_COMMANDE = "En validant cette commande, le client reconnaît avoir pris connaissance des conditions de travail de PHOTART IMPRIM (brief, retouches, délais, validation avant impression, paiement) et les accepte sans réserve. Le prix indiqué est une estimation et peut varier selon les conditions et termes de travail définis avec le client.";
+    const NOTE_FACTURE = "Ce document est un devis estimatif et ne constitue pas une facture définitive. Le prix final peut varier selon les conditions et termes de travail définis avec le client. Validité 15 jours. Paiement : Orange Money, Wave, Moov Money, ou virement bancaire N° " + COMPANY.compte + ".";
+
+    const toBase64 = (bytes) => Buffer.from(bytes).toString("base64");
+
+    // ---- MODE TÉLÉCHARGEMENT : un seul PDF (2 pages) pour éviter le blocage
+    // par le navigateur des téléchargements multiples automatiques ----
+    if (deliveryMode === "download") {
+      const combinedBytes = await buildCombinedDocument({
+        numero,
+        client,
+        product: product || "Demande de devis",
+        details,
+        unitPrice: unitPrice || null,
+        noteBonCommande: NOTE_BON_COMMANDE,
+        noteFacture: NOTE_FACTURE,
+      });
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          success: true,
+          numero,
+          files: [
+            { filename: "PHOTART_IMPRIM_Bon_de_commande_et_facture.pdf", content: toBase64(combinedBytes) },
+          ],
+        }),
+      };
+    }
+
     const bonCommandeBytes = await buildDocument({
       title: "BON DE COMMANDE",
       numero,
@@ -142,7 +200,7 @@ exports.handler = async function (event) {
       product: product || "Demande de devis",
       details,
       unitPrice: unitPrice || null,
-      note: "En validant cette commande, le client reconnaît avoir pris connaissance des conditions de travail de PHOTART IMPRIM (brief, retouches, délais, validation avant impression, paiement) et les accepte sans réserve. Le prix indiqué est une estimation et peut varier selon les conditions et termes de travail définis avec le client.",
+      note: NOTE_BON_COMMANDE,
     });
 
     const factureProformaBytes = await buildDocument({
@@ -152,26 +210,8 @@ exports.handler = async function (event) {
       product: product || "Demande de devis",
       details,
       unitPrice: unitPrice || null,
-      note: "Ce document est un devis estimatif et ne constitue pas une facture définitive. Le prix final peut varier selon les conditions et termes de travail définis avec le client. Validité 15 jours. Paiement : Orange Money, Wave, Moov Money, ou virement bancaire N° " + COMPANY.compte + ".",
+      note: NOTE_FACTURE,
     });
-
-    const toBase64 = (bytes) => Buffer.from(bytes).toString("base64");
-
-    // ---- MODE TÉLÉCHARGEMENT : on renvoie direct les PDF en base64, pas d'email ----
-    if (deliveryMode === "download") {
-      return {
-        statusCode: 200,
-        headers,
-        body: JSON.stringify({
-          success: true,
-          numero,
-          files: [
-            { filename: "Bon_de_commande.pdf", content: toBase64(bonCommandeBytes) },
-            { filename: "Facture_proforma.pdf", content: toBase64(factureProformaBytes) },
-          ],
-        }),
-      };
-    }
 
     // ---- MODE WHATSAPP : pas d'envoi automatique de PDF (limitation WhatsApp),
     // on renvoie juste un lien wa.me pré-rempli vers le numéro de l'entreprise ----
