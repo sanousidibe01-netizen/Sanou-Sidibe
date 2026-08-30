@@ -741,6 +741,7 @@
         </label>
         <button type="submit" id="devisSubmitBtn">Envoyer ma demande — recevoir bon de commande &amp; facture proforma</button>
         <button type="button" class="btn-secondary" id="submitWhatsapp">Ou envoyer via WhatsApp</button>
+        <button type="button" class="btn-secondary" id="submitDownload">Ou télécharger directement mes documents</button>
         <div class="sent" id="formSent">✓ Vos documents (bon de commande + facture proforma) ont été envoyés par email.</div>
         <div class="sent" id="formError" style="background:var(--red);">⚠ Envoi automatique indisponible pour le moment — utilisez WhatsApp ci-dessus, ou réessayez plus tard.</div>
       </form>
@@ -988,6 +989,7 @@
         body: JSON.stringify({ name: nom, email, phone: tel, product: produit, details }),
       });
       if (!resp.ok) throw new Error('Échec envoi');
+      sentBox.textContent = '✓ Vos documents (bon de commande + facture proforma) ont été envoyés par email.';
       sentBox.classList.add('show');
       document.getElementById('devis').reset();
     } catch (err) {
@@ -1005,6 +1007,61 @@
     const whatsappUrl = `https://wa.me/22372418551?text=${encodeURIComponent(message)}`;
     document.getElementById('formSent').classList.add('show');
     window.open(whatsappUrl, '_blank');
+  });
+
+  // Téléchargement direct des PDF (bon de commande + facture proforma) sans passer par email
+  function base64ToBlob(base64, mime) {
+    const byteChars = atob(base64);
+    const byteNumbers = new Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+    return new Blob([new Uint8Array(byteNumbers)], { type: mime });
+  }
+
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  document.getElementById('submitDownload').addEventListener('click', async () => {
+    const form = document.getElementById('devis');
+    if (!form.reportValidity()) return;
+
+    const { nom, tel, produit, details } = buildMessage();
+    const btn = document.getElementById('submitDownload');
+    const sentBox = document.getElementById('formSent');
+    const errorBox = document.getElementById('formError');
+    sentBox.classList.remove('show');
+    errorBox.classList.remove('show');
+
+    const originalLabel = btn.textContent;
+    btn.textContent = 'Génération en cours…';
+    btn.disabled = true;
+
+    try {
+      const resp = await fetch('/.netlify/functions/generate-quote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: nom, phone: tel, product: produit, details, mode: 'download' }),
+      });
+      if (!resp.ok) throw new Error('Échec génération');
+      const data = await resp.json();
+      data.files.forEach((f) => {
+        downloadBlob(base64ToBlob(f.content, 'application/pdf'), f.filename);
+      });
+      sentBox.textContent = '✓ Vos documents (bon de commande + facture proforma) ont été téléchargés.';
+      sentBox.classList.add('show');
+    } catch (err) {
+      errorBox.classList.add('show');
+    } finally {
+      btn.textContent = originalLabel;
+      btn.disabled = false;
+    }
   });
 </script>
 
