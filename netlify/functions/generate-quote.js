@@ -142,7 +142,7 @@ exports.handler = async function (event) {
       product: product || "Demande de devis",
       details,
       unitPrice: unitPrice || null,
-      note: "En validant cette commande, le client reconnaît avoir pris connaissance des conditions de travail de PHOTART IMPRIM (brief, retouches, délais, validation avant impression, paiement) et les accepte sans réserve.",
+      note: "En validant cette commande, le client reconnaît avoir pris connaissance des conditions de travail de PHOTART IMPRIM (brief, retouches, délais, validation avant impression, paiement) et les accepte sans réserve. Le prix indiqué est une estimation et peut varier selon les conditions et termes de travail définis avec le client.",
     });
 
     const factureProformaBytes = await buildDocument({
@@ -152,7 +152,7 @@ exports.handler = async function (event) {
       product: product || "Demande de devis",
       details,
       unitPrice: unitPrice || null,
-      note: "Ce document est un devis estimatif et ne constitue pas une facture définitive. Validité 15 jours. Paiement : Orange Money, Wave, Moov Money, ou virement bancaire N° " + COMPANY.compte + ".",
+      note: "Ce document est un devis estimatif et ne constitue pas une facture définitive. Le prix final peut varier selon les conditions et termes de travail définis avec le client. Validité 15 jours. Paiement : Orange Money, Wave, Moov Money, ou virement bancaire N° " + COMPANY.compte + ".",
     });
 
     const toBase64 = (bytes) => Buffer.from(bytes).toString("base64");
